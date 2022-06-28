@@ -115,7 +115,7 @@ impl Canary {
         }))
     }
 
-    pub(crate) fn touched(self, core: &mut probe_rs::Core, elf: &Elf) -> anyhow::Result<bool> {
+    pub(crate) fn touched(self, mut core: &mut probe_rs::Core, elf: &Elf) -> anyhow::Result<bool> {
         let size_kb = self.size as f64 / 1024.0;
         if self.measure_stack {
             log::info!(
@@ -123,9 +123,9 @@ impl Canary {
                 size_kb,
             );
         }
-        let mut canary = vec![0; self.size];
+
         let start = Instant::now();
-        core.read_8(self.address, &mut canary)?;
+        let touched_address = measure_stack(&mut core, self.address, self.size as u32)?;
         let seconds = start.elapsed().as_secs_f64();
         log::trace!(
             "reading canary took {:.3}s ({:.2} KiB/s)",
@@ -133,11 +133,9 @@ impl Canary {
             size_kb / seconds
         );
 
-        let min_stack_usage = match canary.iter().position(|b| *b != CANARY_VALUE) {
-            Some(pos) => {
-                let touched_address = self.address + pos as u32;
+        let min_stack_usage = match touched_address {
+            Some(touched_address) => {
                 log::debug!("canary was touched at {:#010X}", touched_address);
-
                 Some(elf.vector_table.initial_stack_pointer - touched_address)
             }
             None => None,
@@ -278,4 +276,21 @@ fn paint_subroutine(start: u32, size: u32) -> [u8; PAINT_SUBROUTINE_LENGTH] {
         e1, e2, e3, e4, // .word ; end address
         CV, CV, CV, CV, // .word ; canary value
     ]
+}
+
+/// Create a subroutine to measure if the stack grew into the painted area.
+///
+/// Returns the lowest address which does not contain the [CANARY_VALUE] anymore.
+///
+/// Both `start` and `size` need to be 4-byte-aligned.
+fn measure_stack(core: &mut Core, start: u32, size: u32) -> Result<Option<u32>, probe_rs::Error> {
+    todo!()
+}
+
+/// The length of the `measure_subroutine`.
+const MEASURE_SUBROUTINE_LENGTH: usize = 0;
+
+/// TODO
+fn measure_subroutine(start: u32, size: u32) -> [u8; MEASURE_SUBROUTINE_LENGTH] {
+    todo!()
 }
