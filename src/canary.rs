@@ -200,13 +200,14 @@ fn round_up(n: u32, k: u32) -> u32 {
 fn paint_stack(core: &mut Core, start: u32, size: u32) -> Result<(), probe_rs::Error> {
     // does the subroutine fit inside the stack?
     assert!(
-        SUBROUTINE_LENGTH <= size as usize,
+        PAINT_SUBROUTINE_LENGTH <= size as usize,
         "subroutine doesn't fit inside stack"
     );
 
     // write subroutine to RAM
     // NOTE: add `SUBROUTINE_LENGTH` to `start`, to avoid the subroutine overwriting itself
-    core.write_8(start, &subroutine(start + SUBROUTINE_LENGTH as u32, size))?;
+    let subroutine = paint_subroutine(start + PAINT_SUBROUTINE_LENGTH as u32, size);
+    core.write_8(start, &subroutine)?;
 
     // store current PC and set PC to beginning of subroutine
     let previous_pc = core.read_core_reg(PC)?;
@@ -217,7 +218,7 @@ fn paint_stack(core: &mut Core, start: u32, size: u32) -> Result<(), probe_rs::E
     core.wait_for_core_halted(TIMEOUT)?;
 
     // overwrite subroutine
-    core.write_8(start, &[CANARY_VALUE; SUBROUTINE_LENGTH])?;
+    core.write_8(start, &[CANARY_VALUE; PAINT_SUBROUTINE_LENGTH])?;
 
     // reset PC to where it was before
     core.write_core_reg(PC, previous_pc)?;
@@ -225,8 +226,8 @@ fn paint_stack(core: &mut Core, start: u32, size: u32) -> Result<(), probe_rs::E
     Ok(())
 }
 
-/// The length of the subroutine.
-const SUBROUTINE_LENGTH: usize = 28;
+/// The length of the `paint_subroutine`.
+const PAINT_SUBROUTINE_LENGTH: usize = 28;
 
 /// Create a subroutine to paint [`CANARY_VALUE`] from `start` till `start + size`.
 ///
@@ -250,7 +251,7 @@ const SUBROUTINE_LENGTH: usize = 28;
 //  118:   20000100    .word   0x20000100  ; start
 //  11c:   20000200    .word   0x20000200  ; end
 //  120:   aaaaaaaa    .word   0xaaaaaaaa  ; pattern
-fn subroutine(start: u32, size: u32) -> [u8; SUBROUTINE_LENGTH] {
+fn paint_subroutine(start: u32, size: u32) -> [u8; PAINT_SUBROUTINE_LENGTH] {
     assert_eq!(start % 4, 0, "`start` needs to be 4-byte-aligned");
     assert_eq!(size % 4, 0, "`end` needs to be 4-byte-aligned");
 
