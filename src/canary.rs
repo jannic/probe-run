@@ -98,7 +98,7 @@ impl Canary {
             );
         }
         let start = Instant::now();
-        paint_stack(&mut core, stack_start, stack_start + size as u32)?;
+        paint_stack(&mut core, stack_start, size as u32)?;
         let seconds = start.elapsed().as_secs_f64();
         log::trace!(
             "setting up canary took {:.3}s ({:.2} KiB/s)",
@@ -196,22 +196,17 @@ fn round_up(n: u32, k: u32) -> u32 {
 
 /// Write [`CANARY_VALUE`] to the stack.
 ///
-/// Both `start` and `end` need to be 4-byte-aligned.
-fn paint_stack(core: &mut Core, start: u32, end: u32) -> Result<(), probe_rs::Error> {
-    assert!(start < end, "start needs to be smaller than end address");
-    assert_eq!(start % 4, 0, "`start` needs to be 4-byte-aligned");
-    assert_eq!(end % 4, 0, "`end` needs to be 4-byte-aligned");
-
+/// Both `start` and `size` need to be 4-byte-aligned.
+fn paint_stack(core: &mut Core, start: u32, size: u32) -> Result<(), probe_rs::Error> {
     // does the subroutine fit inside the stack?
-    let stack_size = (end - start) as usize;
     assert!(
-        SUBROUTINE_LENGTH < stack_size,
+        SUBROUTINE_LENGTH <= size as usize,
         "subroutine doesn't fit inside stack"
     );
 
     // write subroutine to RAM
     // NOTE: add `SUBROUTINE_LENGTH` to `start`, to avoid the subroutine overwriting itself
-    core.write_8(start, &subroutine(start + SUBROUTINE_LENGTH as u32, end))?;
+    core.write_8(start, &subroutine(start + SUBROUTINE_LENGTH as u32, size))?;
 
     // store current PC and set PC to beginning of subroutine
     let previous_pc = core.read_core_reg(PC)?;
@@ -233,7 +228,9 @@ fn paint_stack(core: &mut Core, start: u32, end: u32) -> Result<(), probe_rs::Er
 /// The length of the subroutine.
 const SUBROUTINE_LENGTH: usize = 28;
 
-/// Create a subroutine to paint [`CANARY_VALUE`] from `start` till `end`.
+/// Create a subroutine to paint [`CANARY_VALUE`] from `start` till `start + size`.
+///
+/// Both `start` and `size` need to be 4-byte-aligned.
 //
 // Roughly corresponds to following assembly:
 //
@@ -253,7 +250,12 @@ const SUBROUTINE_LENGTH: usize = 28;
 //  118:   20000100    .word   0x20000100  ; start
 //  11c:   20000200    .word   0x20000200  ; end
 //  120:   aaaaaaaa    .word   0xaaaaaaaa  ; pattern
-fn subroutine(start: u32, end: u32) -> [u8; SUBROUTINE_LENGTH] {
+fn subroutine(start: u32, size: u32) -> [u8; SUBROUTINE_LENGTH] {
+    assert_eq!(start % 4, 0, "`start` needs to be 4-byte-aligned");
+    assert_eq!(size % 4, 0, "`end` needs to be 4-byte-aligned");
+
+    let end = start + size;
+
     // convert start and end address to bytes
     let [s1, s2, s3, s4] = start.to_le_bytes();
     let [e1, e2, e3, e4] = end.to_le_bytes();
