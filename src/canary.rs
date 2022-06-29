@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use probe_rs::{Core, MemoryInterface, Session};
+use probe_rs::{Core, CoreRegisterAddress, MemoryInterface, Session};
 
 use crate::{registers::PC, Elf, TargetInfo, TIMEOUT};
 
@@ -195,6 +195,8 @@ fn round_up(n: u32, k: u32) -> u32 {
 /// Write [`CANARY_VALUE`] to the stack.
 ///
 /// Both `start` and `size` need to be 4-byte-aligned.
+///
+/// The [`Core`] is expected to be halted and will also be halted when this function returns.
 fn paint_stack(core: &mut Core, start: u32, size: u32) -> Result<(), probe_rs::Error> {
     // does the subroutine fit inside the stack?
     assert!(
@@ -283,8 +285,47 @@ fn paint_subroutine(start: u32, size: u32) -> [u8; PAINT_SUBROUTINE_LENGTH] {
 /// Returns the lowest address which does not contain the [CANARY_VALUE] anymore.
 ///
 /// Both `start` and `size` need to be 4-byte-aligned.
+///
+/// The [`Core`] is expected to be halted and will also be halted when this function returns.
 fn measure_stack(core: &mut Core, start: u32, size: u32) -> Result<Option<u32>, probe_rs::Error> {
-    todo!()
+    // does the subroutine fit inside the stack?
+    assert!(
+        MEASURE_SUBROUTINE_LENGTH <= size as usize,
+        "subroutine doesn't fit inside stack"
+    );
+
+    let subroutine_address = start + size - MEASURE_SUBROUTINE_LENGTH as u32;
+
+    // 1. use probe-rs to search through MEASURE_SUBROUTINE_LENGTH bytes
+    let mut canary = [0; MEASURE_SUBROUTINE_LENGTH];
+    core.read_8(subroutine_address, &mut canary)?;
+
+    // 2a. If we found a touched byte, return the address of that
+    if let Some(addr) = canary.iter().position(|b| *b != CANARY_VALUE) {
+        return Ok(Some(addr as u32));
+    }
+    // 2b. If we did not, continue
+
+    // 3. Place subroutine in the area we've searched through
+    let subroutine = measure_subroutine(start, size - PAINT_SUBROUTINE_LENGTH as u32);
+    core.write_8(subroutine_address, &subroutine)?;
+
+    // 4. Execute subroutine
+    let previous_pc = core.read_core_reg(PC)?;
+    core.write_core_reg(PC, subroutine_address)?;
+    core.run()?;
+    core.wait_for_core_halted(TIMEOUT)?;
+    core.write_core_reg(PC, previous_pc)?;
+
+    const INITIAL_VALUE: u32 = 0;
+    let touched_value_address = core.read_core_reg(CoreRegisterAddress(0))?; // TODO: how to read value from register?
+    match touched_value_address == INITIAL_VALUE {
+        // 5a. If any address got touched, return Some(address)
+        false => Ok(Some(touched_value_address)),
+
+        // 5b. If no address go touched, return None
+        true => Ok(None),
+    }
 }
 
 /// The length of the `measure_subroutine`.
